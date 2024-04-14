@@ -1,6 +1,6 @@
 from enum import Enum
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import rich
 import rich.logging
@@ -81,7 +81,7 @@ def rename(
         ),
     ] = Strategy.COPY,
     output_dir: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option(
             "-o",
             "--output-dir",

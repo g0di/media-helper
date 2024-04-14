@@ -3,12 +3,13 @@ from pathlib import Path
 import rich
 import rich.columns
 import rich.prompt
+from rich.table import Table
+from rich.text import Text
+
 from media_helper.core.model import Movie
 from media_helper.ports import (
     UserInterface,
 )
-from rich.table import Table
-from rich.text import Text
 
 
 class RichUserInterface(UserInterface):

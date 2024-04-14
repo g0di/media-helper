@@ -26,11 +26,12 @@ def test_get_movie_by_id_returns_movie_with_correct_info(
         original_title="A Case of You",
         release_year=2013,
         source="tmdb",
+        link="https://www.themoviedb.org/movie/174316-a-case-of-you",
     )
 
 
 def test_search_movie(sut: TmdbMovieDatabase) -> None:
-    movies = sut.search("Black Swan", release_year="2010")
+    movies = sut.search("Black Swan", release_year=2010)
 
     # NOTE: not so much we can test here...
     assert movies

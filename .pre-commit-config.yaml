@@ -1,0 +1,26 @@
+repos:
+  - repo: https://github.com/pdm-project/pdm
+    rev: 2.14.0
+    hooks:
+      - id: pdm-lock-check
+      - id: pdm-sync
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-ast
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: check-toml
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.3.7
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.9.0
+    hooks:
+      - id: mypy
+        args: [--python-executable, .venv/bin/python]
+        additional_dependencies: [pydantic==2.6.4]

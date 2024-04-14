@@ -3,9 +3,10 @@ from datetime import date
 from typing import Annotated, Generic, TypeVar
 
 import httpx
+from pydantic import BaseModel, BeforeValidator
+
 from media_helper.core.model import Movie
 from media_helper.ports import MovieDatabase
-from pydantic import BaseModel, BeforeValidator
 
 T = TypeVar("T")
 
@@ -54,7 +55,7 @@ class TmdbMovieDatabase(MovieDatabase):
             params={"language": lang},
         )
         self.web_base_url = web_base_url
-        self._cache_by_id: dict[int, Movie] = {}
+        self._cache_by_id: dict[str, Movie] = {}
         self._logger = logging.getLogger(__name__)
 
     def close(self) -> None:
@@ -76,7 +77,7 @@ class TmdbMovieDatabase(MovieDatabase):
 
     def get(self, movie_id: str) -> Movie | None:
         if movie_id in self._cache_by_id:
-            return self._cache_by_id[int(movie_id)]
+            return self._cache_by_id[movie_id]
 
         raw = self._http.get(f"/3/movie/{movie_id}")
         if raw.status_code == 404 and raw.headers["Content-Type"] == "application/json":
@@ -102,6 +103,6 @@ class TmdbMovieDatabase(MovieDatabase):
             source=self.SOURCE,
             link=f"{self.web_base_url}/movie/{tmdb_movie.id}?language={self.lang}",
         )
-        self._cache_by_id[tmdb_movie.id] = movie
+        self._cache_by_id[movie.id] = movie
 
         return movie
