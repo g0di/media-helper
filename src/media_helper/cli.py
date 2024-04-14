@@ -1,6 +1,6 @@
 from enum import Enum
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Union
 
 import rich
 import rich.logging
@@ -23,8 +23,7 @@ movies_app = typer.Typer(help="Movies related commands")
 app.add_typer(movies_app, name="movie")
 
 
-class Strategy(str, Enum):
-    COPY = "copy"
+class RenameStrategy(str, Enum):
     HARDLINK = "hardlink"
     MOVE = "move"
     NOOP = "noop"
@@ -58,7 +57,7 @@ def suggest(
     """Suggest a clean name for the movie file having given name."""
     clean_name, movie_link = _suggest(filename, srv=get_movie_service())
     rich.print(
-        rich.text.Text(clean_name, style="bold"),
+        rich.text.Text(str(clean_name), style="bold"),
         f"[link={movie_link}](See movie)[/link]",
     )
 
@@ -70,24 +69,24 @@ def rename(
         typer.Argument(
             exists=False,
             file_okay=True,
+            dir_okay=False,
             resolve_path=True,
             help="Path(s) to the movie(s) file(s) to rename",
         ),
     ],
     strategy: Annotated[
-        Strategy,
+        RenameStrategy,
         typer.Option(
             "-s", "--strategy", help="Define how the file will actually be renamed"
         ),
-    ] = Strategy.COPY,
+    ] = RenameStrategy.MOVE,
     output_dir: Annotated[
-        Path | None,
+        Union[Path | None],
         typer.Option(
             "-o",
             "--output-dir",
             dir_okay=True,
-            help="Directory where the renamed file will be put. "
-            "If 'own_folder' is also passed, the renamed file will be in its own directory within the given directory",
+            help="Directory where the renamed file will be put. Defaults to its parent folder",
         ),
     ] = None,
 ) -> None:
@@ -121,23 +120,37 @@ def rename(
     for index, filepath in enumerate(filepaths):
         pos = rich.text.Text(f"[{index}/{len(filepaths)}] ", style="yellow")
         if not confirm.ask(
-            rich.text.Text.assemble(pos, (str(filepath.name))), default=True
+            rich.text.Text.assemble(pos, rich.text.Text(filepath.name)),
+            default=True,
         ):
             continue
-        clean_name, _ = _suggest(filepath.name, srv=srv)
-        clean_name = prompt.ask("Confirm name", default=clean_name)
-        output_path = Path(output_dir or filepath.parent) / clean_name
-        tree = rich.tree.Tree(str(output_path.parent.parent))
-        tree.add(str(output_path.parent.name)).add(str(output_path.name))
-        console.print(tree)
-        # TODO: actually implements the copy/hardlink/rename
-        # TODO: display link to movie suggested as well
-        # TODO: Always show found movies even if only one to allow to pick a different movie ID
-        # Use the first movie in the list as default value
-        # TODO: allow to customize the final name?
+
+        clean_name, movie_link = _suggest(filepath.name, srv=srv)
+        console.print(
+            rich.text.Text(str(clean_name)), style=f"yellow link {movie_link}"
+        )
+        clean_name = Path(prompt.ask("New name?", default=str(clean_name)))
+
+        output_path = Path(output_dir or filepath.parent).joinpath(clean_name)
+        console.print(
+            strategy,
+            rich.text.Text(str(filepath), style="green"),
+            "->",
+            rich.text.Text(str(output_path), style="green"),
+        )
+
+        match strategy:
+            case RenameStrategy.HARDLINK:
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                filepath.hardlink_to(output_path)
+            case RenameStrategy.MOVE:
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                filepath.rename(output_path)
+            case RenameStrategy.NOOP:
+                pass
 
 
-def _suggest(filename: str, *, srv: MovieService) -> tuple[str, str]:
+def _suggest(filename: str, *, srv: MovieService) -> tuple[Path, str]:
     try:
         return srv.suggest_filename(filename)
     except MovieNotFoundError as not_found:
@@ -147,9 +160,12 @@ def _suggest(filename: str, *, srv: MovieService) -> tuple[str, str]:
     except ManyMoviesFoundError as many_found:
         table = rich.table.Table(title=str(many_found))
         table.add_column("ID", justify="right", no_wrap=True)
-        table.add_column("Released", justify="right", style="cyan", no_wrap=True)
+        table.add_column("Released", style="cyan", no_wrap=True)
         table.add_column("Title", style="magenta")
-        table.add_column("Original Title", justify="right", style="green")
+        table.add_column("Original Title", style="green")
+        table.add_column("Popularity", justify="right")
+        table.add_column("Vote Average", justify="right")
+        table.add_column("Vote Count", justify="right")
 
         for movie in many_found.movies:
             table.add_row(
@@ -157,10 +173,13 @@ def _suggest(filename: str, *, srv: MovieService) -> tuple[str, str]:
                 str(movie.release_year),
                 movie.title,
                 movie.original_title,
+                str(movie.popularity),
+                f"{int(movie.vote_average * 10)}%",
+                str(movie.vote_count),
             )
 
         console.print(table)
-        movie_id = prompt.ask("Enter movie ID")
+        movie_id = prompt.ask("Enter movie ID", default=many_found.movies[0].id)
         return srv.suggest_filename(filename, movie_id=movie_id)
 
 

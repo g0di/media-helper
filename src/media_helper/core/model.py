@@ -16,6 +16,9 @@ class Movie(BaseModel):
     release_year: int
     source: str
     link: str
+    popularity: float
+    vote_average: float
+    vote_count: int
 
     def __str__(self) -> str:
         parts = [f"{self.title} ({self.release_year})"]
@@ -66,6 +69,7 @@ class MediaInformation(BaseModel):
     subtitles: list[str] = Field(default_factory=list)
     split_name: str | None = None
     source: tuple[str, str] | None = None
+    suffix: str
     # Flags
     hdr: bool = False
     internal: bool = False
@@ -116,6 +120,7 @@ class MediaInformation(BaseModel):
         content.update(
             split_name=split_match.group() if split_match else None,
             source=source_match.group(1, 2) if source_match else None,
+            suffix=Path(name).suffix,
         )
         return cls.model_validate(content)
 

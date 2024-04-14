@@ -1,12 +1,12 @@
-import os
 import re
+from pathlib import Path
 
 from media_helper.core.model import MediaInformation, Movie
 
 
 class PlexMediaFileNameFormatter:
-    def format_movie_filepath(self, media_info: MediaInformation, movie: Movie) -> str:
-        return os.path.join(
+    def format_movie_filepath(self, media_info: MediaInformation, movie: Movie) -> Path:
+        return Path(
             self.format_movie_dirname(media_info, movie),
             self.format_movie_filename(media_info, movie),
         )
@@ -41,7 +41,7 @@ class PlexMediaFileNameFormatter:
         if metadata:
             parts.append("".join(metadata))
 
-        return " ".join(parts)
+        return " ".join(parts) + media_info.suffix
 
     def format_movie_dirname(self, media_info: MediaInformation, movie: Movie) -> str:
         parts = [

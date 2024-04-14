@@ -102,6 +102,9 @@ class TmdbMovieDatabase(MovieDatabase):
             else None,
             source=self.SOURCE,
             link=f"{self.web_base_url}/movie/{tmdb_movie.id}?language={self.lang}",
+            popularity=tmdb_movie.popularity,
+            vote_average=tmdb_movie.vote_average,
+            vote_count=tmdb_movie.vote_count,
         )
         self._cache_by_id[movie.id] = movie
 
