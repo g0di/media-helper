@@ -80,8 +80,7 @@ class TmdbMovieDatabase(MovieDatabase):
             return self._cache_by_id[movie_id]
 
         raw = self._http.get(f"/3/movie/{movie_id}")
-        if raw.status_code == 404 and raw.headers["Content-Type"] == "application/json":
-            # Test for content type to distinguish movie not found from incorrect URL
+        if raw.status_code == 404:
             return None
         raw.raise_for_status()
         movie = TmdbMovie.model_validate(raw.json())
@@ -100,7 +99,7 @@ class TmdbMovieDatabase(MovieDatabase):
             release_year=tmdb_movie.release_date.year
             if tmdb_movie.release_date
             else None,
-            source=self.SOURCE,
+            source_name=self.SOURCE,
             link=f"{self.web_base_url}/movie/{tmdb_movie.id}?language={self.lang}",
             popularity=tmdb_movie.popularity,
             vote_average=tmdb_movie.vote_average,
