@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import Any, NamedTuple
 
 from ..core.formatter import PlexMediaFileNameFormatter
@@ -12,23 +11,26 @@ from ..ports import (
 )
 
 
-class MovieSuggestedFilepath(NamedTuple):
-    filepath: Path
-    movie_link: str
+class FormattedMediaInformation(NamedTuple):
+    filename: str
+    dirname: str
+    link: str
 
 
 class MovieService:
     def __init__(self, moviedb: MovieDatabase) -> None:
         self.moviedb = moviedb
+        self.formatter = PlexMediaFileNameFormatter()
 
     def parse_filename(self, filename: str) -> dict[str, Any]:
-        media_info = MediaInformation.from_name(filename)
+        media_info = MediaInformation.from_filename(filename)
         return media_info.model_dump(exclude_defaults=True)
 
-    def suggest_filename(
+    def format_filename(
         self, filename: str, movie_id: str | None = None
-    ) -> MovieSuggestedFilepath:
-        media_info = MediaInformation.from_name(filename)
+    ) -> FormattedMediaInformation:
+        """Format given filename as a movie media using plex naming conventions."""
+        media_info = MediaInformation.from_filename(filename)
         if not media_info.title:
             raise MovieNotFoundError(
                 "Could not determine movie title from given filename"
@@ -55,10 +57,9 @@ class MovieService:
                 )
             movie = movies[0]
 
-        formatter = PlexMediaFileNameFormatter()
-        suggested_filepath = formatter.format_movie_filepath(media_info, movie)
-
-        return MovieSuggestedFilepath(
-            suggested_filepath,
+        media_info.update_from_movie(movie)
+        return FormattedMediaInformation(
+            self.formatter.format_movie_filename(media_info),
+            self.formatter.format_movie_dirname(media_info),
             movie.link,
         )

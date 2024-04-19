@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import re
-from functools import cached_property, lru_cache
 from pathlib import Path
-from typing import ClassVar
+from typing import Callable, ClassVar
 
 import PTN
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 
 class Movie(BaseModel):
@@ -14,7 +13,7 @@ class Movie(BaseModel):
     title: str
     original_title: str
     release_year: int
-    source: str
+    source_name: str
     link: str
     popularity: float
     vote_average: float
@@ -28,20 +27,20 @@ class Movie(BaseModel):
         return " - ".join(parts)
 
 
-class MediaInformation(BaseModel):
-    model_config = ConfigDict(frozen=True)
+Transformer = Callable[[re.Match[str], "MediaInformation"], None]
 
-    _EDITION_PATTERN: ClassVar[re.Pattern[str]] = re.compile(
-        r"{edition-(.+?)( Edition)?}"
-    )
-    _PART_PATTERN: ClassVar[re.Pattern[str]] = re.compile(
-        r"(cd|disk|disc|dvd|part|pt)([0-9])"
-    )
-    _SOURCE_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"{(imdb|tmdb)-(.+?)}")
+
+class MediaInformation(BaseModel):
+    transformers: ClassVar[list[tuple[re.Pattern[str], Transformer]]] = []
 
     # Info that will always be uniques (never lists)
     episode_name: str | None = Field(None, alias="episodeName")
     title: str | None = None
+
+    # Custom info added compared to PTN
+    split_name: str | None = None
+    source: MediaSource | None = None
+    file_ext: str
 
     # Info that will always be lists
     # see: https://github.com/platelminto/parse-torrent-title?tab=readme-ov-file#types-of-parts
@@ -67,9 +66,7 @@ class MediaInformation(BaseModel):
     site: list[str] = Field(default_factory=list)
     size: list[str] = Field(default_factory=list)
     subtitles: list[str] = Field(default_factory=list)
-    split_name: str | None = None
-    source: tuple[str, str] | None = None
-    suffix: str
+
     # Flags
     hdr: bool = False
     internal: bool = False
@@ -91,9 +88,15 @@ class MediaInformation(BaseModel):
     is_3d: bool = Field(False, alias="3d")
 
     @classmethod
-    @lru_cache
-    def from_name(cls, name: str) -> "MediaInformation":
-        """
+    def search(cls, pattern: str) -> Callable[[Transformer], None]:
+        def wrapper(fn: Transformer) -> None:
+            cls.transformers.append((re.compile(pattern), fn))
+
+        return wrapper
+
+    @classmethod
+    def from_filename(cls, name: str) -> "MediaInformation":
+        """Extract media information from given filename.
 
         Ensure media information properly parse strings
         >>> MediaInformation.from_str("Deadliest.Catch.S00E66.No.Safe.Passage.720p.AMZN.WEB-DL.DDP2.0.H.264-NTb[TGx]")
@@ -103,55 +106,62 @@ class MediaInformation(BaseModel):
         >>> MediaInformation.from_str("Vacancy (2007) 720p Bluray Dual Audio [Hindi + English] ⭐800 MB⭐ DD - 2.0 MSub x264 - Shadow (BonsaiHD)")
         MediaInformation(...)
         """
-        # Extract edition tags if any (we'll let PTN determine the right edition)
-        edition_match = cls._EDITION_PATTERN.search(name)
-        if edition_match:
-            name = name.replace(edition_match.group(), "")
-        # Extract the split name, if any
-        split_match = cls._PART_PATTERN.search(name)
-        if split_match:
-            name = name.replace(split_match.group(), "")
-        # Extract the movie info source, if any
-        source_match = cls._SOURCE_PATTERN.search(name)
-        if source_match:
-            name = name.replace(source_match.group(), "")
+        matched_transformers: list[tuple[re.Match[str], Transformer]] = []
+        for pattern, transformer in cls.transformers:
+            match = pattern.search(name)
+            if not match:
+                continue
+            # Removed matched content to avoid duplicate matches
+            name = name.replace(match.group(), "")
+            matched_transformers.append((match, transformer))
 
         content = PTN.parse(name, standardise=True, coherent_types=True)
-        content.update(
-            split_name=split_match.group() if split_match else None,
-            source=source_match.group(1, 2) if source_match else None,
-            suffix=Path(name).suffix,
-        )
-        return cls.model_validate(content)
+        content.update(file_ext=Path(name).suffix)
+        info = cls.model_validate(content)
 
-    @classmethod
-    def from_filename(cls, filepath: Path) -> MediaInformation:
-        return cls.from_name(filepath.stem)
+        for match, transformer in matched_transformers:
+            transformer(match, info)
 
-    @cached_property
-    def quality_full(self) -> str:
-        items = self.quality + self.resolution
-        if self.proper:
-            items.append("Proper")
-        if self.upscaled:
-            items.append("Upscaled")
-        if self.widescreen:
-            items.append("Widescreen")
-        return " ".join(items)
+        return info
 
-    @cached_property
-    def edition_tags(self) -> list[str]:
-        tags = []
-        if self.directors_cut:
-            tags.append("Director's Cut")
-        if self.international_cut:
-            tags.append("International's Cut")
-        if self.unrated:
-            tags.append("Unrated")
-        if self.remastered:
-            tags.append("Remastered")
-        if self.limited:
-            tags.append("Limited Edition")
-        if self.extended:
-            tags.append("Extended Edition")
-        return tags
+    def update_from_movie(self, movie: Movie) -> None:
+        self.title = movie.title
+        self.year = [movie.release_year]
+        self.source = MediaSource(name=movie.source_name, media_id=movie.id)
+
+
+class MediaSource(BaseModel):
+    name: str
+    media_id: str
+
+
+@MediaInformation.search(r"(cd|disk|disc|dvd|part|pt)([0-9])")
+def _handle_split_name(match: re.Match[str], media_info: MediaInformation) -> None:
+    media_info.split_name = match.group()
+
+
+@MediaInformation.search(r"{(imdb|tmdb)-(.+?)}")
+def _handle_db_source(match: re.Match[str], media_info: MediaInformation) -> None:
+    media_info.source = MediaSource(name=match.group(1), media_id=match.group(2))
+
+
+@MediaInformation.search(r"(Multi|MULTI|MULTi)")
+def _handle_multi_language(match: re.Match[str], media_info: MediaInformation) -> None:
+    media_info.language.append("Multi")
+
+
+@MediaInformation.search(r"HDLight")
+def _handle_additional_quality(
+    match: re.Match[str], media_info: MediaInformation
+) -> None:
+    media_info.quality.append("HDLight")
+
+
+@MediaInformation.search(r"VOSTFR")
+def _handle_vostfr(match: re.Match[str], media_info: MediaInformation) -> None:
+    media_info.subtitles.append("VOSTFR")
+
+
+@MediaInformation.search(r"(VFF|VFI|VF2)")
+def _handle_vff_vfi(match: re.Match[str], media_info: MediaInformation) -> None:
+    media_info.language.append("French")

@@ -2,21 +2,13 @@ from enum import Enum
 from pathlib import Path
 from typing import Annotated, Union
 
-import rich
-import rich.logging
-import rich.prompt
-import rich.table
-import rich.text
-import rich.tree
 import typer
 
-from .bootstrap import get_movie_service
+from .bootstrap import get_movie_service, get_ui
 from .ports import ManyMoviesFoundError, MovieNotFoundError
-from .services.movie import MovieService
 
-console = rich.console.Console()
-prompt = rich.prompt.Prompt(console=console)
-confirm = rich.prompt.Confirm(console=console)
+movie_srv = get_movie_service()
+ui = get_ui()
 app = typer.Typer()
 movies_app = typer.Typer(help="Movies related commands")
 
@@ -36,30 +28,29 @@ def parse(
     """Extract and display media information from given file name."""
     srv = get_movie_service()
     media_info = srv.parse_filename(filename)
-
-    table = rich.table.Table(title="Media Information")
-    table.add_column("", justify="right", no_wrap=True)
-    table.add_column("Value")
-
-    for info, value in media_info.items():
-        pretty_value = (
-            ", ".join(str(i) for i in value) if isinstance(value, list) else str(value)
-        )
-        table.add_row(info, pretty_value)
-
-    rich.print(table)
+    ui.print_media_information(media_info)
 
 
 @movies_app.command()
-def suggest(
-    filename: Annotated[str, typer.Argument(help="File name to clean")],
+def format(
+    filepath: Annotated[Path, typer.Argument(help="File name to format")],
 ) -> None:
     """Suggest a clean name for the movie file having given name."""
-    clean_name, movie_link = _suggest(filename, srv=get_movie_service())
-    rich.print(
-        rich.text.Text(str(clean_name), style="bold"),
-        f"[link={movie_link}](See movie)[/link]",
-    )
+    filename = filepath.name
+    try:
+        fmedia_info = movie_srv.format_filename(filename)
+    except MovieNotFoundError as not_found:
+        ui.error(not_found)
+        movie_id = ui.ask_movie_id()
+        fmedia_info = movie_srv.format_filename(filename, movie_id=movie_id)
+        ui.print_formatted_media_info(fmedia_info)
+    except ManyMoviesFoundError as many_found:
+        ui.print_movies(many_found, many_found.movies)
+        movie_id = ui.ask_movie_id(default=many_found.movies[0].id)
+        fmedia_info = movie_srv.format_filename(filename, movie_id=movie_id)
+        ui.print_formatted_media_info(fmedia_info)
+    else:
+        ui.print_formatted_media_info(fmedia_info)
 
 
 @movies_app.command()
@@ -89,6 +80,9 @@ def rename(
             help="Directory where the renamed file will be put. Defaults to its parent folder",
         ),
     ] = None,
+    # TODO: add flag to force parsing files already tagged with a source (imdb/tmdb)
+    # TODO: add a flag to trust and use the source in file names for searching movie info
+    # TODO: add a tag for answering YES to all confirmations automatically
 ) -> None:
     """Rename a movie file in a standard way.
 
@@ -116,29 +110,40 @@ def rename(
     To ensure ouput will feet your needs, start off using the ``--strategy noop`` flag
     for a dry run.
     """
-    srv = get_movie_service()
-    for index, filepath in enumerate(filepaths):
-        pos = rich.text.Text(f"[{index}/{len(filepaths)}] ", style="yellow")
-        if not confirm.ask(
-            rich.text.Text.assemble(pos, rich.text.Text(filepath.name)),
-            default=True,
+    # TODO: update docstrings
+    for filepath in ui.iterpaths(
+        filepaths,
+        skipif=lambda p: "Already source"
+        if "source" in movie_srv.parse_filename(p.stem)
+        else "",
+    ):
+        # TODO: extract this try except block into the UI service directly
+        filename = filepath.name
+        try:
+            fmedia_info = movie_srv.format_filename(filename)
+        except MovieNotFoundError as not_found:
+            ui.error(not_found)
+            movie_id = ui.ask_movie_id()
+            fmedia_info = movie_srv.format_filename(filename, movie_id=movie_id)
+        except ManyMoviesFoundError as many_found:
+            ui.print_movies(many_found, many_found.movies)
+            movie_id = ui.ask_movie_id(default=many_found.movies[0].id)
+            fmedia_info = movie_srv.format_filename(filename, movie_id=movie_id)
+
+        output_dir = output_dir or filepath.parent
+        output_path = output_dir / fmedia_info.dirname / fmedia_info.filename
+        # TODO: short-circuit if the formatted name is identical as current filepath
+        # TODO: simplify this confirm function
+        if not ui.confirm_rename_media(
+            output_dir,
+            filepath,
+            fmedia_info,
+            strategy,
+            skip=strategy == RenameStrategy.NOOP,
         ):
             continue
 
-        clean_name, movie_link = _suggest(filepath.name, srv=srv)
-        console.print(
-            rich.text.Text(str(clean_name)), style=f"yellow link {movie_link}"
-        )
-        clean_name = Path(prompt.ask("New name?", default=str(clean_name)))
-
-        output_path = Path(output_dir or filepath.parent).joinpath(clean_name)
-        console.print(
-            strategy,
-            rich.text.Text(str(filepath), style="green"),
-            "->",
-            rich.text.Text(str(output_path), style="green"),
-        )
-
+        # TODO: not sure if this code should not be in the movie service directly
         match strategy:
             case RenameStrategy.HARDLINK:
                 output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -148,39 +153,6 @@ def rename(
                 filepath.rename(output_path)
             case RenameStrategy.NOOP:
                 pass
-
-
-def _suggest(filename: str, *, srv: MovieService) -> tuple[Path, str]:
-    try:
-        return srv.suggest_filename(filename)
-    except MovieNotFoundError as not_found:
-        console.print(not_found, style="bold red")
-        movie_id = prompt.ask("Enter movie ID")
-        return srv.suggest_filename(filename, movie_id=movie_id)
-    except ManyMoviesFoundError as many_found:
-        table = rich.table.Table(title=str(many_found))
-        table.add_column("ID", justify="right", no_wrap=True)
-        table.add_column("Released", style="cyan", no_wrap=True)
-        table.add_column("Title", style="magenta")
-        table.add_column("Original Title", style="green")
-        table.add_column("Popularity", justify="right")
-        table.add_column("Vote Average", justify="right")
-        table.add_column("Vote Count", justify="right")
-
-        for movie in many_found.movies:
-            table.add_row(
-                rich.text.Text(movie.id, style=f"link {movie.link}"),
-                str(movie.release_year),
-                movie.title,
-                movie.original_title,
-                str(movie.popularity),
-                f"{int(movie.vote_average * 10)}%",
-                str(movie.vote_count),
-            )
-
-        console.print(table)
-        movie_id = prompt.ask("Enter movie ID", default=many_found.movies[0].id)
-        return srv.suggest_filename(filename, movie_id=movie_id)
 
 
 if __name__ == "__main__":

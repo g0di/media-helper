@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from .adapters.rich import RichUserInterface
 from .adapters.tmdb import TmdbMovieDatabase
 from .config import Settings
 from .ports import MovieDatabase
@@ -20,3 +21,7 @@ def get_movie_db() -> MovieDatabase:
 
 def get_movie_service() -> MovieService:
     return MovieService(get_movie_db())
+
+
+def get_ui() -> RichUserInterface:
+    return RichUserInterface(get_movie_service())
